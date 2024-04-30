@@ -12,21 +12,24 @@ pub struct DockerViewerApp {
     pub receiver: mpsc::Receiver<HashMap<String, (ContainerSummary, String)>>,
     pub containers: HashMap<String, (ContainerSummary, String)>,
     pub selected_container: Option<String>,
-    pub needs_update: bool, // Add a flag to track when updates are needed
 }
 
 impl App for DockerViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.needs_update {
-            ctx.request_repaint(); // This is the correct method to request a repaint in egui
-            self.needs_update = false;
-        }
-
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Top bar with heading and Kill All button
             ui.horizontal(|ui| {
-                ui.heading("Docker Containers");
+                ui.heading("Containers");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Remove All").clicked() {
+                        let all_summaries: Vec<ContainerSummary> = self
+                            .containers
+                            .values()
+                            .cloned()
+                            .into_iter()
+                            .map(|a| a.0)
+                            .collect();
+                        tokio::spawn(async move { remove_containers(all_summaries).await });
+                    }
                     if ui.button("Kill All").clicked() {
                         let all_summaries: Vec<ContainerSummary> = self
                             .containers
@@ -35,22 +38,18 @@ impl App for DockerViewerApp {
                             .into_iter()
                             .map(|a| a.0)
                             .collect();
-                        tokio::spawn(
-                            async move { kill_and_remove_containers(all_summaries).await },
-                        );
+                        tokio::spawn(async move { kill_containers(all_summaries).await });
                     }
                 });
             });
 
-            // Check for new containers and update if available
             while let Ok(new_containers) = self.receiver.try_recv() {
                 self.containers = new_containers;
             }
 
             let mut container_names: Vec<_> = self.containers.keys().collect();
-            container_names.sort(); // Sort container names alphabetically
+            container_names.sort();
 
-            // Display container buttons and status
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for name in container_names {
                     ui.horizontal(|ui| {
@@ -62,24 +61,37 @@ impl App for DockerViewerApp {
                         }
                         if let Some((summary, _)) = self.containers.get(name) {
                             if let Some(status) = summary.status.clone() {
-                                ui.label(format!("Status: {}", status));
+                                ui.label(format!("Status: {} | ", status));
+                            }
+
+                            if let Some(image_name) = summary.image.clone() {
+                                ui.label(format!("Image: {}", image_name));
                             }
                         }
-                        if self.selected_container.as_ref() == Some(name) {
-                            if ui.button("Kill").clicked() {
-                                if let Some((summary, _logs)) = self.containers.get(name) {
-                                    let summary_clone = summary.clone();
-                                    tokio::spawn(async move {
-                                        kill_and_remove_container(&summary_clone).await
-                                    });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if self.selected_container.as_ref() == Some(name) {
+                                if ui.button("Remove").clicked() {
+                                    if let Some((summary, _logs)) = self.containers.get(name) {
+                                        let summary_clone = summary.clone();
+                                        tokio::spawn(async move {
+                                            remove_container(&summary_clone).await
+                                        });
+                                    }
+                                }
+                                if ui.button("Kill").clicked() {
+                                    if let Some((summary, _logs)) = self.containers.get(name) {
+                                        let summary_clone = summary.clone();
+                                        tokio::spawn(async move {
+                                            kill_container(&summary_clone).await
+                                        });
+                                    }
                                 }
                             }
-                        }
+                        })
                     });
                 }
             });
 
-            // Scrollable logs for the selected container
             if let Some(name) = &self.selected_container {
                 if let Some((_summary, logs)) = self.containers.get(name) {
                     ui.group(|ui| {
@@ -92,17 +104,33 @@ impl App for DockerViewerApp {
                 }
             }
         });
-        // Request a repaint for the next frame to keep the UI active
-        self.needs_update = true;
+        ctx.request_repaint();
         sleep(Duration::from_millis(50));
     }
 }
 
-async fn kill_and_remove_container(container: &ContainerSummary) {
+async fn kill_containers(containers: Vec<ContainerSummary>) {
+    let docker = Docker::connect_with_unix_defaults().expect("Failed to connect to Docker");
+    for container in containers {
+        _kill_container(&docker, &container).await;
+    }
+}
+async fn remove_containers(containers: Vec<ContainerSummary>) {
+    let docker = Docker::connect_with_unix_defaults().expect("Failed to connect to Docker");
+    for container in containers {
+        _remove_container(&docker, &container).await;
+    }
+}
+
+async fn kill_container(container: &ContainerSummary) {
+    let docker = Docker::connect_with_unix_defaults().expect("Failed to connect to Docker");
+    _kill_container(&docker, container).await;
+}
+
+async fn _kill_container(docker: &Docker, container: &ContainerSummary) {
     let Some(container_id) = container.id.clone() else {
         return;
     };
-    let docker = Docker::connect_with_unix_defaults().unwrap();
     let kill_options = KillContainerOptions { signal: "SIGKILL" };
     if let Err(e) = docker
         .kill_container(&container_id, Some(kill_options))
@@ -110,6 +138,17 @@ async fn kill_and_remove_container(container: &ContainerSummary) {
     {
         eprintln!("Failed to kill container {}: {}", container_id, e);
     }
+}
+
+async fn remove_container(container: &ContainerSummary) {
+    let docker = Docker::connect_with_unix_defaults().expect("Failed to connect to Docker");
+    _remove_container(&docker, container).await;
+}
+
+async fn _remove_container(docker: &Docker, container: &ContainerSummary) {
+    let Some(container_id) = container.id.clone() else {
+        return;
+    };
 
     let remove_options = RemoveContainerOptions {
         force: true,
@@ -120,11 +159,5 @@ async fn kill_and_remove_container(container: &ContainerSummary) {
         .await
     {
         eprintln!("Failed to remove container {}: {}", container_id, e);
-    }
-}
-
-async fn kill_and_remove_containers(containers: Vec<ContainerSummary>) {
-    for container in containers {
-        kill_and_remove_container(&container).await;
     }
 }

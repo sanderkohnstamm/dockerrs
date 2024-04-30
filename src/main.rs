@@ -64,14 +64,13 @@ async fn main() {
 
     let options = eframe::NativeOptions::default();
     eframe::run_native(
-        "Docker Viewer",
+        "dockerrs",
         options,
         Box::new(|_cc| {
             Box::new(DockerViewerApp {
                 receiver,
                 containers: HashMap::new(),
                 selected_container: None,
-                needs_update: true,
             })
         }),
     )
