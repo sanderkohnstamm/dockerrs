@@ -146,7 +146,14 @@ impl App for DockerViewerApp {
                                 // Extract the last three folders from the path
                                 let folders: Vec<_> = path.iter().rev().take(3).collect();
                                 let display_path = folders.iter().rev().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join("/");
-                                ui.label(display_path);
+                                if ui.selectable_label(
+                                    self.selected_compose_for_preview == Some(path.clone()),
+                                    display_path,
+                                )
+                                .clicked(){
+                                    self.selected_compose_for_preview = Some(path.clone())
+                                }
+                      
                     
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
@@ -163,9 +170,6 @@ impl App for DockerViewerApp {
                                                     path
                                                 );
                                             }
-                                        }
-                                        if ui.button("Preview").clicked() {
-                                            self.selected_compose_for_preview = Some(path.clone());
                                         }
                                     },
                                 );
