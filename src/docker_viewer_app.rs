@@ -143,7 +143,11 @@ impl App for DockerViewerApp {
                         for path in &self.compose_files {
                             ui.separator();
                             ui.horizontal(|ui| {
-                                ui.label(path.display().to_string());
+                                // Extract the last three folders from the path
+                                let folders: Vec<_> = path.iter().rev().take(3).collect();
+                                let display_path = folders.iter().rev().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join("/");
+                                ui.label(display_path);
+                    
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
@@ -155,9 +159,9 @@ impl App for DockerViewerApp {
                                                 });
                                             } else {
                                                 eprintln!(
-                                            "Error: Cannot determine the parent directory for {:?}",
-                                            path
-                                        );
+                                                    "Error: Cannot determine the parent directory for {:?}",
+                                                    path
+                                                );
                                             }
                                         }
                                         if ui.button("Preview").clicked() {
