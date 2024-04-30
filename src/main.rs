@@ -3,9 +3,10 @@ pub mod docker_viewer_app;
 use bollard::container::{ListContainersOptions, LogsOptions};
 use bollard::Docker;
 
-use docker_viewer_app::DockerViewerApp;
+use docker_viewer_app::{AppView, DockerViewerApp};
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -63,16 +64,14 @@ async fn main() {
     });
 
     let options = eframe::NativeOptions::default();
-    eframe::run_native(
-        "dockerrs",
-        options,
-        Box::new(|_cc| {
-            Box::new(DockerViewerApp {
-                receiver,
-                containers: HashMap::new(),
-                selected_container: None,
-            })
-        }),
-    )
-    .unwrap();
+    let mut app = DockerViewerApp {
+        receiver,
+        containers: HashMap::new(),
+        selected_container: None,
+        current_view: AppView::Containers,
+        selected_compose_for_preview: None,
+        compose_files: Vec::new(),
+    };
+    app.load_compose_files(Path::new("../"));
+    eframe::run_native("dockerrs", options, Box::new(|_cc| Box::new(app))).unwrap();
 }

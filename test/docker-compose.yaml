@@ -1,0 +1,23 @@
+version: '3'
+
+services:
+  web1:
+    image: nginx:latest
+    ports:
+      - "8080:80"
+    volumes:
+      - ./html1:/usr/share/nginx/html
+    networks:
+      - my_network
+
+  web2:
+    image: nginx:latest
+    ports:
+      - "8081:80"
+    volumes:
+      - ./html2:/usr/share/nginx/html
+    networks:
+      - my_network
+
+networks:
+  my_network:
