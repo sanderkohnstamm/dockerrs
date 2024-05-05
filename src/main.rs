@@ -1,4 +1,5 @@
 pub mod docker_viewer_app;
+pub mod utils;
 
 use bollard::container::{ListContainersOptions, LogsOptions};
 use bollard::Docker;
@@ -71,7 +72,10 @@ async fn main() {
         current_view: AppView::Containers,
         selected_compose_for_preview: None,
         compose_files: Vec::new(),
+        dockerfiles: Vec::new(),
+        selected_dockerfile_for_preview: None,
     };
     app.load_compose_files(Path::new("../"));
+    app.load_dockerfiles(Path::new("../"));
     eframe::run_native("dockerrs", options, Box::new(|_cc| Box::new(app))).unwrap();
 }
