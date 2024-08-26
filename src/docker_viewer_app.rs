@@ -112,17 +112,19 @@ impl DockerViewerApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Run").clicked() {
-                            if let Some(parent) = path.parent() {
-                                let parent_clone = parent.to_owned();
-                                tokio::spawn(async move {
-                                    run_docker_compose_up(&parent_clone).await;
-                                });
-                            } else {
-                                eprintln!(
-                                    "Error: Cannot determine the parent directory for {:?}",
-                                    path
-                                );
+                        if self.selected_compose_for_preview.as_ref() == Some(path) {
+                            if ui.button("Run").clicked() {
+                                if let Some(parent) = path.parent() {
+                                    let parent_clone = parent.to_owned();
+                                    tokio::spawn(async move {
+                                        run_docker_compose_up(&parent_clone).await;
+                                    });
+                                } else {
+                                    eprintln!(
+                                        "Error: Cannot determine the parent directory for {:?}",
+                                        path
+                                    );
+                                }
                             }
                         }
                     });
@@ -144,29 +146,56 @@ impl DockerViewerApp {
     }
 
     fn containers_appview(&mut self, ui: &mut egui::Ui) {
-        for (name, (summary, logs)) in &self.containers {
-            ui.horizontal(|ui| {
-                ui.label(name);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Logs").clicked() {
+        while let Ok(new_containers) = self.receiver.try_recv() {
+            self.containers = new_containers;
+        }
+
+        let mut container_names: Vec<_> = self.containers.keys().collect();
+        container_names.sort();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for name in container_names {
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(self.selected_container.as_ref() == Some(name), name)
+                        .clicked()
+                    {
                         self.selected_container = Some(name.clone());
                     }
-                });
-            });
+                    if let Some((summary, _)) = self.containers.get(name) {
+                        if let Some(status) = summary.status.clone() {
+                            ui.label(format!("Status: {} | ", status));
+                        }
 
-            ui.group(|ui| {
-                if self.selected_container.as_ref() == Some(name) {
-                    if ui.button("Remove").clicked() {
-                        let summary_clone = summary.clone();
-                        tokio::spawn(async move { remove_container(&summary_clone).await });
+                        if let Some(image_name) = summary.image.clone() {
+                            ui.label(format!("Image: {}", image_name));
+                        }
                     }
-                    if ui.button("Kill").clicked() {
-                        let summary_clone = summary.clone();
-                        tokio::spawn(async move { kill_container(&summary_clone).await });
-                    }
-                }
-            });
-        }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.selected_container.as_ref() == Some(name) {
+                            if ui.button("Remove").clicked() {
+                                if let Some((summary, _logs)) = self.containers.get(name) {
+                                    let summary_clone = summary.clone();
+                                    tokio::spawn(
+                                        async move { remove_container(&summary_clone).await },
+                                    );
+                                }
+                            }
+                            if ui.button("Kill").clicked() {
+                                if let Some((summary, _logs)) = self.containers.get(name) {
+                                    let summary_clone = summary.clone();
+                                    tokio::spawn(
+                                        async move { kill_container(&summary_clone).await },
+                                    );
+                                }
+                            }
+                        }
+                    })
+                });
+            }
+        });
 
         if let Some(name) = &self.selected_container {
             if let Some((_summary, logs)) = self.containers.get(name) {
@@ -198,17 +227,19 @@ impl DockerViewerApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Build").clicked() {
-                            if let Some(parent) = dockerfile.parent() {
-                                let parent_clone = parent.to_owned();
-                                tokio::spawn(async move {
-                                    build_docker_image(&parent_clone).await;
-                                });
-                            } else {
-                                eprintln!(
-                                    "Error: Cannot determine the parent directory for {:?}",
-                                    dockerfile
-                                );
+                        if self.selected_dockerfile_for_preview.as_ref() == Some(dockerfile) {
+                            if ui.button("Build").clicked() {
+                                if let Some(parent) = dockerfile.parent() {
+                                    let parent_clone = parent.to_owned();
+                                    tokio::spawn(async move {
+                                        build_docker_image(&parent_clone).await;
+                                    });
+                                } else {
+                                    eprintln!(
+                                        "Error: Cannot determine the parent directory for {:?}",
+                                        dockerfile
+                                    );
+                                }
                             }
                         }
                     });

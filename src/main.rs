@@ -2,6 +2,7 @@ pub mod docker_viewer_app;
 pub mod utils;
 
 use bollard::container::{ListContainersOptions, LogsOptions};
+use bollard::secret::ContainerSummary;
 use bollard::Docker;
 
 use docker_viewer_app::{AppView, DockerViewerApp};
@@ -9,7 +10,7 @@ use futures_util::stream::StreamExt;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::time::sleep;
 
 #[tokio::main]
@@ -22,6 +23,14 @@ async fn main() {
         ..Default::default()
     };
     let (sender, receiver) = mpsc::channel(100);
+    spawn_container_listener(sender, log_options);
+    run_app(receiver);
+}
+
+fn spawn_container_listener(
+    sender: Sender<HashMap<String, (ContainerSummary, String)>>,
+    log_options: LogsOptions<String>,
+) {
     tokio::spawn(async move {
         let docker = Docker::connect_with_unix_defaults().expect("Failed to connect to Docker");
 
@@ -36,7 +45,6 @@ async fn main() {
 
             let mut summaries = HashMap::new();
 
-            // let mut containers = vec![];
             for container in &containers {
                 if let Some(id) = &container.id {
                     let mut logs = String::new();
@@ -63,7 +71,9 @@ async fn main() {
             sleep(Duration::from_millis(50)).await;
         }
     });
+}
 
+fn run_app(receiver: Receiver<HashMap<String, (ContainerSummary, String)>>) {
     let options = eframe::NativeOptions::default();
     let mut app = DockerViewerApp {
         receiver,
