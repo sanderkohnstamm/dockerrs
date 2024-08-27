@@ -34,18 +34,16 @@ pub async fn run_docker_compose_up(directory: &Path) {
     }
 }
 
-pub async fn build_docker_image(dockerfile: &Path) {
+pub async fn build_docker_image(dockerfile: &Path, image_name: &str) {
     println!(
         "Building Docker image from {:?}, named {:?}",
-        dockerfile,
-        dockerfile.file_stem().unwrap()
+        dockerfile, image_name
     );
 
     let output = Command::new("docker")
         .arg("build")
         .arg("-t")
-        // Use the file name as the image name
-        .arg(dockerfile.file_stem().unwrap())
+        .arg(image_name)
         .arg(dockerfile)
         .output()
         .await

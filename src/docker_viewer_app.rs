@@ -29,6 +29,7 @@ pub struct DockerViewerApp {
     pub current_view: AppView,
     pub dockerfiles: Vec<PathBuf>,
     pub selected_dockerfile_for_preview: Option<PathBuf>,
+    pub docker_build_name: String,
 }
 
 impl App for DockerViewerApp {
@@ -228,11 +229,18 @@ impl DockerViewerApp {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.selected_dockerfile_for_preview.as_ref() == Some(dockerfile) {
+                            // Add an input field for the image name
+
+                            // Button to build the image
                             if ui.button("Build").clicked() {
-                                if let Some(parent) = dockerfile.parent() {
+                                // Check if an image name has been provided
+                                if self.docker_build_name.is_empty() {
+                                    eprintln!("Error: Please provide a name for the Docker image.");
+                                } else if let Some(parent) = dockerfile.parent() {
                                     let parent_clone = parent.to_owned();
+                                    let image_name_clone = self.docker_build_name.clone();
                                     tokio::spawn(async move {
-                                        build_docker_image(&parent_clone).await;
+                                        build_docker_image(&parent_clone, &image_name_clone).await;
                                     });
                                 } else {
                                     eprintln!(
@@ -241,6 +249,7 @@ impl DockerViewerApp {
                                     );
                                 }
                             }
+                            ui.text_edit_singleline(&mut self.docker_build_name);
                         }
                     });
                 });

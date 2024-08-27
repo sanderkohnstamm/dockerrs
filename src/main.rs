@@ -84,6 +84,7 @@ fn run_app(receiver: Receiver<HashMap<String, (ContainerSummary, String)>>) {
         compose_files: Vec::new(),
         dockerfiles: Vec::new(),
         selected_dockerfile_for_preview: None,
+        docker_build_name: "add tag".to_owned(),
     };
     app.load_compose_files(Path::new("../"));
     app.load_dockerfiles(Path::new("../"));
