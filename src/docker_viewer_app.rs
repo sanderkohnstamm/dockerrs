@@ -9,11 +9,12 @@ use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use walkdir::WalkDir;
 
-use crate::utils::{
-    build_docker_image, kill_container, kill_containers, remove_container, remove_containers,
-    run_docker_compose_up,
+use crate::{
+    docker_connection::DockerConnection,
+    utils::{build_docker_image, run_docker_compose_up},
 };
 
+#[derive(PartialEq)]
 pub enum AppView {
     Containers,
     Composes,
@@ -21,50 +22,71 @@ pub enum AppView {
 }
 
 pub struct DockerViewerApp {
-    pub receiver: mpsc::Receiver<HashMap<String, (ContainerSummary, String)>>,
-    pub containers: HashMap<String, (ContainerSummary, String)>,
-    pub selected_container: Option<String>,
-    pub compose_files: Vec<PathBuf>,
-    pub selected_compose_for_preview: Option<PathBuf>,
-    pub current_view: AppView,
-    pub dockerfiles: Vec<PathBuf>,
-    pub selected_dockerfile_for_preview: Option<PathBuf>,
-    pub docker_build_name: String,
+    receiver: mpsc::Receiver<HashMap<String, (ContainerSummary, String)>>,
+    docker_connection: DockerConnection,
+    containers: HashMap<String, (ContainerSummary, String)>,
+    selected_container: Option<String>,
+    selected_summary_field: String,
+    compose_files: Vec<PathBuf>,
+    selected_compose_for_preview: Option<PathBuf>,
+    current_view: AppView,
+    dockerfiles: Vec<PathBuf>,
+    selected_dockerfile_for_preview: Option<PathBuf>,
+    docker_build_name: String,
+}
+
+impl DockerViewerApp {
+    pub fn new(
+        receiver: mpsc::Receiver<HashMap<String, (ContainerSummary, String)>>,
+        docker_connection: DockerConnection,
+    ) -> Self {
+        Self {
+            receiver,
+            docker_connection,
+            containers: HashMap::new(),
+            selected_container: None,
+            selected_summary_field: "id".to_owned(),
+            current_view: AppView::Containers,
+            selected_compose_for_preview: None,
+            compose_files: Vec::new(),
+            dockerfiles: Vec::new(),
+            selected_dockerfile_for_preview: None,
+            docker_build_name: "add tag".to_owned(),
+        }
+    }
 }
 
 impl App for DockerViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Containers").clicked() {
+                if ui
+                    .selectable_label(self.current_view == AppView::Containers, "Containers")
+                    .clicked()
+                {
                     self.current_view = AppView::Containers;
                 }
-                if ui.button("Composes").clicked() {
+                if ui
+                    .selectable_label(self.current_view == AppView::Composes, "Composes")
+                    .clicked()
+                {
                     self.current_view = AppView::Composes;
                 }
-                if ui.button("Dockerfiles").clicked() {
+                if ui
+                    .selectable_label(self.current_view == AppView::Dockerfiles, "Dockerfiles")
+                    .clicked()
+                {
                     self.current_view = AppView::Dockerfiles;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Remove All").clicked() {
-                        let all_summaries: Vec<ContainerSummary> = self
-                            .containers
-                            .values()
-                            .cloned()
-                            .into_iter()
-                            .map(|a| a.0)
-                            .collect();
-                        tokio::spawn(async move { remove_containers(all_summaries).await });
+                        self.docker_connection.remove_all_containers();
                     }
                     if ui.button("Kill All").clicked() {
-                        let all_summaries: Vec<ContainerSummary> = self
-                            .containers
-                            .values()
-                            .cloned()
-                            .into_iter()
-                            .map(|a| a.0)
-                            .collect();
-                        tokio::spawn(async move { kill_containers(all_summaries).await });
+                        self.docker_connection.kill_all_containers();
+                    }
+                    if ui.button("Stop All").clicked() {
+                        self.docker_connection.stop_all_containers();
                     }
                 });
             });
@@ -117,9 +139,7 @@ impl DockerViewerApp {
                             if ui.button("Run").clicked() {
                                 if let Some(parent) = path.parent() {
                                     let parent_clone = parent.to_owned();
-                                    tokio::spawn(async move {
-                                        run_docker_compose_up(&parent_clone).await;
-                                    });
+                                    run_docker_compose_up(&parent_clone);
                                 } else {
                                     eprintln!(
                                         "Error: Cannot determine the parent directory for {:?}",
@@ -151,7 +171,7 @@ impl DockerViewerApp {
             self.containers = new_containers;
         }
 
-        let mut container_names: Vec<_> = self.containers.keys().collect();
+        let mut container_names: Vec<_> = self.containers.keys().cloned().collect();
         container_names.sort();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -160,36 +180,46 @@ impl DockerViewerApp {
 
                 ui.horizontal(|ui| {
                     if ui
-                        .selectable_label(self.selected_container.as_ref() == Some(name), name)
+                        .selectable_label(
+                            self.selected_container.as_ref() == Some(&name),
+                            name.clone(),
+                        )
                         .clicked()
                     {
                         self.selected_container = Some(name.clone());
                     }
-                    if let Some((summary, _)) = self.containers.get(name) {
+                    if let Some((summary, _)) = self.containers.get(&name) {
                         if let Some(status) = summary.status.clone() {
                             ui.label(format!("Status: {} | ", status));
                         }
-
                         if let Some(image_name) = summary.image.clone() {
                             ui.label(format!("Image: {}", image_name));
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.selected_container.as_ref() == Some(name) {
-                            if ui.button("Remove").clicked() {
-                                if let Some((summary, _logs)) = self.containers.get(name) {
-                                    let summary_clone = summary.clone();
-                                    tokio::spawn(
-                                        async move { remove_container(&summary_clone).await },
-                                    );
+                        if self.selected_container.as_ref() == Some(&name) {
+                            match self.get_container_summary(&name) {
+                                Some(summary) => {
+                                    if ui.button("Remove").clicked() {
+                                        self.docker_connection.remove_container(summary.id.clone());
+                                    }
+                                    if ui.button("Kill").clicked() {
+                                        self.docker_connection.kill_container(summary.id.clone());
+                                    }
+                                    if summary.state == Some("running".to_owned()) {
+                                        if ui.button("Stop").clicked() {
+                                            self.docker_connection
+                                                .stop_container(summary.id.clone());
+                                        }
+                                    } else {
+                                        if ui.button("Start").clicked() {
+                                            self.docker_connection
+                                                .start_container(summary.id.clone());
+                                        }
+                                    }
                                 }
-                            }
-                            if ui.button("Kill").clicked() {
-                                if let Some((summary, _logs)) = self.containers.get(name) {
-                                    let summary_clone = summary.clone();
-                                    tokio::spawn(
-                                        async move { kill_container(&summary_clone).await },
-                                    );
+                                None => {
+                                    ui.label("No summary available");
                                 }
                             }
                         }
@@ -198,17 +228,189 @@ impl DockerViewerApp {
             }
         });
 
-        if let Some(name) = &self.selected_container {
-            if let Some((_summary, logs)) = self.containers.get(name) {
-                ui.group(|ui| {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.label(logs);
-                        });
-                });
-            }
+        self.display_summary_and_logs(ui);
+    }
+
+    fn get_container_summary(&self, container_id: &str) -> Option<ContainerSummary> {
+        if let Some((container, _)) = self.containers.get(container_id) {
+            Some(container.clone())
+        } else {
+            None
         }
+    }
+
+    fn display_summary_and_logs(&mut self, ui: &mut egui::Ui) {
+        let Some(name) = &self.selected_container else {
+            return;
+        };
+        let Some((summary, logs)) = self.containers.get(name) else {
+            return;
+        };
+        ui.group(|ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.label("Summary:");
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .selectable_label(self.selected_summary_field == "ID", "ID")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "ID".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Names", "Names")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Names".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Image", "Image")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Image".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Image ID", "Image ID")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Image ID".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Command", "Command")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Command".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Created", "Created")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Created".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Ports", "Ports")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Ports".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Size RW", "Size RW")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Size RW".to_string();
+                        }
+                        if ui
+                            .selectable_label(
+                                self.selected_summary_field == "Size Root FS",
+                                "Size Root FS",
+                            )
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Size Root FS".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Labels", "Labels")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Labels".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "State", "State")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "State".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Status", "Status")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Status".to_string();
+                        }
+                        if ui
+                            .selectable_label(
+                                self.selected_summary_field == "Host Config",
+                                "Host Config",
+                            )
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Host Config".to_string();
+                        }
+                        if ui
+                            .selectable_label(
+                                self.selected_summary_field == "Network Settings",
+                                "Network Settings",
+                            )
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Network Settings".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.selected_summary_field == "Mounts", "Mounts")
+                            .clicked()
+                        {
+                            self.selected_summary_field = "Mounts".to_string();
+                        }
+                    });
+
+                    match self.selected_summary_field.as_str() {
+                        "ID" => {
+                            ui.monospace(format!("{:?}", summary.id.clone().unwrap_or_default()))
+                        }
+                        "Names" => {
+                            ui.monospace(format!("{:?}", summary.names.clone().unwrap_or_default()))
+                        }
+                        "Image" => {
+                            ui.monospace(format!("{:?}", summary.image.clone().unwrap_or_default()))
+                        }
+                        "Image ID" => ui.monospace(format!(
+                            "{:?}",
+                            summary.image_id.clone().unwrap_or_default()
+                        )),
+                        "Command" => ui.monospace(format!(
+                            "{:?}",
+                            summary.command.clone().unwrap_or_default()
+                        )),
+                        "Created" => ui.monospace(format!(
+                            "{:?}",
+                            summary.created.clone().unwrap_or_default()
+                        )),
+                        "Ports" => {
+                            ui.monospace(format!("{:?}", summary.ports.clone().unwrap_or_default()))
+                        }
+                        "Size RW" => ui.monospace(format!(
+                            "{:?}",
+                            summary.size_rw.clone().unwrap_or_default()
+                        )),
+                        "Size Root FS" => ui.monospace(format!(
+                            "{:?}",
+                            summary.size_root_fs.clone().unwrap_or_default()
+                        )),
+                        "Labels" => ui
+                            .monospace(format!("{:?}", summary.labels.clone().unwrap_or_default())),
+                        "State" => {
+                            ui.monospace(format!("{:?}", summary.state.clone().unwrap_or_default()))
+                        }
+                        "Status" => ui
+                            .monospace(format!("{:?}", summary.status.clone().unwrap_or_default())),
+                        "Host Config" => ui.monospace(format!(
+                            "{:?}",
+                            summary.host_config.clone().unwrap_or_default().network_mode
+                        )),
+                        "Network Settings" => ui.monospace(format!(
+                            "{:?}",
+                            summary.network_settings.clone().unwrap_or_default()
+                        )),
+                        "Mounts" => ui
+                            .monospace(format!("{:?}", summary.mounts.clone().unwrap_or_default())),
+                        _ => ui.monospace(""),
+                    };
+
+                    ui.separator();
+                    ui.label(format!("Logs: \n {}", logs));
+                });
+        });
     }
 
     fn dockerfiles_appview(&mut self, ui: &mut egui::Ui) {
@@ -239,9 +441,7 @@ impl DockerViewerApp {
                                 } else if let Some(parent) = dockerfile.parent() {
                                     let parent_clone = parent.to_owned();
                                     let image_name_clone = self.docker_build_name.clone();
-                                    tokio::spawn(async move {
-                                        build_docker_image(&parent_clone, &image_name_clone).await;
-                                    });
+                                    build_docker_image(&parent_clone, &image_name_clone);
                                 } else {
                                     eprintln!(
                                         "Error: Cannot determine the parent directory for {:?}",
