@@ -2,6 +2,12 @@
 name = "dockerrs"
 version = "0.2.0"
 edition = "2021"
+description = "A lightweight terminal UI for managing Docker containers and networks"
+license = "Apache-2.0"
+repository = "https://github.com/sanderkohnstamm/dockerrs"
+readme = "README.md"
+keywords = ["docker", "tui", "containers", "terminal"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1"

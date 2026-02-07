@@ -1,17 +1,53 @@
 # dockerrs
 
-Show us your dockers!
+A lightweight terminal UI for managing Docker containers and networks, built with Rust.
 
-Simple tool to visualize, run, kill, build and remove containers, composes and dockerfiles in your workspace.
+## Features
 
-### Containers
+- **Containers** - List all containers with name, image, state, status, and ports
+- **Networks** - Browse Docker networks and inspect connected containers
+- **Logs** - Stream container logs in real time with scroll support
+- **Actions** - Start, stop, kill, and remove containers directly from the TUI
 
-Shows all running containers and their logs when clicked
+## Install
 
-### Composes
+```
+cargo install dockerrs
+```
 
-Shows the paths to all docker composes in your workspace and allows you to run them. (Executes docker compose up -d)
+Or build from source:
 
-### Dockerfiles
+```
+git clone https://github.com/sanderkohnstamm/dockerrs
+cd dockerrs
+cargo build --release
+```
 
-Shows the paths to all dockerfiles in your workspace and allows you to build them. (Executes docker build -t <dockerfile> .)
+## Usage
+
+```
+dockerrs
+```
+
+Requires a running Docker daemon.
+
+## Keybindings
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Navigate up/down |
+| `Tab` | Switch between Containers and Networks |
+| `Enter` | Open container detail view |
+| `l` | Stream container logs |
+| `s` | Start/stop container (toggle) |
+| `x` | Kill container |
+| `r` | Remove container |
+| `Esc` | Back to previous view |
+| `PageUp` / `PageDown` | Scroll logs |
+| `g` / `G` | Jump to top/bottom of logs |
+| `q` | Quit |
+| `Ctrl+c` | Force quit |
+
+## License
+
+Apache-2.0
