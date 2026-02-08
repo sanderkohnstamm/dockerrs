@@ -4,10 +4,12 @@ A lightweight terminal UI for managing Docker containers and networks, built wit
 
 ## Features
 
-- **Containers** - List all containers with name, image, state, status, and ports
+- **Containers** - List all containers with name, image, state, status, and ports. Color-coded by state (running, exited, paused, etc.)
+- **Container Detail** - Split-pane view showing ID, image, command, labels, networks, and mounts
 - **Networks** - Browse Docker networks and inspect connected containers
 - **Logs** - Stream container logs in real time with scroll support
 - **Actions** - Start, stop, kill, and remove containers directly from the TUI
+- **Live Refresh** - Container and network data auto-updates in the background
 
 ## Install
 
@@ -35,7 +37,7 @@ Requires a running Docker daemon.
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Navigate up/down |
+| `j` / `k` / `Arrow keys` | Navigate up/down |
 | `Tab` | Switch between Containers and Networks |
 | `Enter` | Open container detail view |
 | `l` | Stream container logs |
